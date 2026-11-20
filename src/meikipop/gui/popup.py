@@ -12,6 +12,7 @@ from meikipop.config.config import config, IS_MACOS
 from meikipop.dictionary.lookup import DictionaryEntry, KanjiEntry
 from meikipop.gui.highlight import HighlightOverlay
 from meikipop.gui.magpie_manager import magpie_manager
+from meikipop.gui.panel import ResultsPanel
 
 # macOS-specific imports for focus management
 if IS_MACOS:
@@ -30,6 +31,9 @@ class Popup(QWidget):
         self._latest_highlight = None
         self._last_latest_data = None
         self.highlight_overlay = HighlightOverlay()
+        self.panel = ResultsPanel(lambda entries: self._calculate_content_and_size_char_count(entries)[0],
+                                  on_close=self._panel_closed)
+        self.display_changed = []  # callbacks when the result display changes outside the settings (panel ×)
         self._data_lock = threading.Lock()
         self._previous_active_window_on_mac = None
 
@@ -162,16 +166,34 @@ class Popup(QWidget):
         with self._data_lock:
             return self._latest_data
 
-    def _update_highlight(self):
-        """Show the on-screen highlight for the current lookup while the popup is visible."""
+    def _update_highlight(self, active: bool):
+        """Show the on-screen highlight for the current lookup while a lookup is active. Unless the overlay is
+        hidden from screenshots, it is only shown with the popup (which pauses screenshots)."""
         with self._data_lock:
             highlight = self._latest_highlight if config.highlight_lookup else None
-        if self.highlight_overlay.set_highlight(highlight):
+        allowed = active and (self.highlight_overlay.excluded or self.is_visible)
+        if allowed and self.highlight_overlay.set_highlight(highlight):
             if not self.highlight_overlay.isVisible():
                 self.highlight_overlay.show()
-                self.raise_()  # keep the popup above the highlight
+                if self.is_visible:
+                    self.raise_()  # keep the popup above the highlight
         else:
             self.highlight_overlay.hide()
+
+    def _update_panel(self, active: bool, latest_data):
+        if config.result_display in ("panel", "both"):
+            if not self.panel.isVisible():
+                self.panel.show()
+            if active:
+                self.panel.set_entries(latest_data)
+        elif self.panel.isVisible():
+            self.panel.hide()
+
+    def _panel_closed(self):
+        config.result_display = "popup"
+        config.save()
+        for callback in self.display_changed:
+            callback()
 
     def process_latest_data_loop(self):
         if not self.is_calibrated:
@@ -185,11 +207,13 @@ class Popup(QWidget):
             self.setFixedSize(new_size)
         self._last_latest_data = latest_data
 
-        if self._latest_data and self.input_loop.is_virtual_hotkey_down() and config.is_enabled:
+        active = bool(latest_data) and self.input_loop.is_virtual_hotkey_down() and config.is_enabled
+        if active and config.result_display in ("popup", "both"):
             self.show_popup()
-            self._update_highlight()
         else:
             self.hide_popup()
+        self._update_panel(active, latest_data)
+        self._update_highlight(active)
 
         mouse_pos = QCursor.pos()
         self.move_to(mouse_pos.x(), mouse_pos.y())
@@ -424,7 +448,8 @@ class Popup(QWidget):
         # logger.debug(f"hide_popup triggered while visibility:{self.is_visible}")
         if not self.is_visible:
             return
-        self.highlight_overlay.hide()
+        if not self.highlight_overlay.excluded:
+            self.highlight_overlay.hide()  # must be gone before screenshots resume
         self.hide()
         self.is_visible = False
         QTimer.singleShot(50, lambda: self._release_lock_safely())  # prevent popup from being screenshotted
@@ -453,6 +478,7 @@ class Popup(QWidget):
     def reapply_settings(self):
         logger.debug("Popup: Re-applying settings and triggering font recalibration.")
         self._apply_frame_stylesheet()
+        self.panel.apply_style()
         # By setting is_calibrated to False, the main loop will automatically
         # run _calibrate_empirically() again with the new font settings.
         self.is_calibrated = False

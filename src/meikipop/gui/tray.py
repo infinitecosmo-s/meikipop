@@ -94,6 +94,14 @@ class TrayIcon(QSystemTrayIcon):
 
         self.update_scan_area_check()
 
+        # Results panel (instead of the popup)
+        self.panel_action = self.menu.addAction("Results Panel")
+        self.panel_action.setCheckable(True)
+        self.panel_action.setChecked(config.result_display in ("panel", "both"))
+        self.panel_action.setToolTip("Show lookups in a movable panel instead of the popup")
+        self.panel_action.triggered.connect(self._on_panel_toggled)
+        self.popup_window.display_changed.append(self.reapply_settings)
+
         self.menu.addSeparator()
 
         self.enable_action = self.menu.addAction("Pause meikipop")
@@ -165,6 +173,10 @@ class TrayIcon(QSystemTrayIcon):
                 config.scan_region = str(index)
                 config.save()
 
+    def _on_panel_toggled(self, checked: bool):
+        config.result_display = "panel" if checked else "popup"
+        config.save()
+
     def _on_ocr_provider_selected(self, action):
         provider_name = action.text()
         if provider_name != config.ocr_provider:
@@ -172,6 +184,7 @@ class TrayIcon(QSystemTrayIcon):
 
     def reapply_settings(self):
         """Updates the tray menu's checkmarks to reflect the current config."""
+        self.panel_action.setChecked(config.result_display in ("panel", "both"))
         # Update OCR Provider selection
         for action in self.ocr_action_group.actions():
             if action.text() == config.ocr_provider:

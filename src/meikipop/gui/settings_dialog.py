@@ -189,6 +189,18 @@ class SettingsDialog(QDialog):
         behavior_layout = QFormLayout()
         self.form_layouts.append(behavior_layout)
 
+        self.result_display_combo = QComboBox()
+        self.result_display_map = {"Popup at cursor": "popup", "Results panel": "panel",
+                                   "Popup and panel": "both"}
+        self.result_display_combo.addItems(self.result_display_map.keys())
+        self.result_display_combo.setCurrentText(
+            next((k for k, v in self.result_display_map.items() if v == config.result_display), "Popup at cursor"))
+        self.result_display_combo.setToolTip(
+            "Results panel: a window you can move (drag its top bar) and resize (drag its corner) that\n"
+            "shows the lookup for whatever is under the cursor, instead of a popup that covers the text.")
+        self._set_expanding(self.result_display_combo)
+        behavior_layout.addRow("Show Results In:", self.result_display_combo)
+
         self.popup_position_combo = QComboBox()
         self.popup_position_combo.addItems(["Flip Both", "Flip Vertically", "Flip Horizontally", "Visual Novel Mode"])
         self.popup_mode_map = {
@@ -483,6 +495,7 @@ class SettingsDialog(QDialog):
         config.show_examples = self.show_examples_check.isChecked()
         config.show_components = self.show_components_check.isChecked()
 
+        config.result_display = self.result_display_map.get(self.result_display_combo.currentText(), "popup")
         selected_friendly_name = self.popup_position_combo.currentText()
         config.popup_position_mode = self.popup_mode_map.get(selected_friendly_name, "flip_vertically")
         config.theme_name = self.theme_combo.currentText()

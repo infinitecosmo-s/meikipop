@@ -5,8 +5,9 @@ A frameless, always-on-top, click-through window placed over the looked-up chara
 (the bunsetsu, or the matched word) and underlines the characters the first popup entry matched; for vertical text the
 underline becomes a side line on the right of the column.
 
-The popup shows and hides it together with itself. While the popup is visible meikipop takes no screenshots (the
-popup holds the screen lock), so the highlight never ends up in an OCR'd screenshot.
+It is excluded from screen capture where Windows supports it, so it never ends up in an OCR'd screenshot. Where
+that is not possible it is only shown together with the popup, while meikipop takes no screenshots (the popup holds
+the screen lock).
 
 Character boxes come in physical screen pixels (as OCR'd, after the Magpie transform), and are converted to Qt's
 device-independent coordinates per screen here.
@@ -19,6 +20,7 @@ from PyQt6.QtGui import QColor, QPainter, QPen, QGuiApplication
 from PyQt6.QtWidgets import QWidget
 
 from meikipop.config.config import config
+from meikipop.gui.capture import exclude_from_capture
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +74,8 @@ class HighlightOverlay(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
         self._highlight = None
+        # hidden from screenshots, so it can be shown without pausing them (e.g. with the results panel)
+        self.excluded = exclude_from_capture(self)
         self._unit_lines: List[QRectF] = []
         self._match_lines: List[QRectF] = []
         self._vertical = False
