@@ -62,10 +62,12 @@ _SYMBOLS_ONLY = re.compile(r"^[\W_ー…・。、！？「」『』（）]*$")
 
 
 def phrase_outlines(paragraphs, geometry) -> tuple:
-    """((character boxes, vertical), ...) for every bunsetsu of the OCR result, for the phrase outlines. Phrases that
-    are only punctuation are left out."""
+    """((character boxes, vertical), ...) for every bunsetsu of the OCR result, for the phrase outlines. Furigana and
+    phrases that are only punctuation are left out."""
     out = []
     for para in paragraphs or ():
+        if para.is_furigana:
+            continue
         boxes = char_boxes(para, geometry)
         if not boxes:
             continue

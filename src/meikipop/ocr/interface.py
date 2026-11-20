@@ -30,6 +30,7 @@ class Paragraph:
     words: List[Word]
     box: BoundingBox
     is_vertical: bool  # True if text is top-to-bottom - optional
+    is_furigana: bool = False  # set by postprocessing for reading aids next to kanji; not outlined as phrases
 
 
 class OcrProvider(abc.ABC):

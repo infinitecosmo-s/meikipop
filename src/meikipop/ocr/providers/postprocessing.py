@@ -2,6 +2,7 @@
 import logging
 import re
 import statistics
+from dataclasses import replace
 from typing import List, Tuple
 
 from meikipop.ocr.interface import Paragraph, Word, BoundingBox
@@ -216,8 +217,8 @@ def group_lines_into_paragraphs(lines: List[Paragraph]) -> List[Paragraph]:
             if merged_para:
                 processed_paragraphs.append(merged_para)
 
-    # Add the isolated furigana lines back as their own separate paragraphs
-    final_paragraphs = processed_paragraphs + furigana_lines
+    # Add the isolated furigana lines back as their own separate paragraphs (still hoverable), marked as furigana
+    final_paragraphs = processed_paragraphs + [replace(line, is_furigana=True) for line in furigana_lines]
 
     logger.debug(f"Regrouped {len(lines)} raw OCR lines into {len(final_paragraphs)} paragraphs.")
     return final_paragraphs
