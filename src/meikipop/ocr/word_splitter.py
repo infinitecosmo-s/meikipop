@@ -173,7 +173,25 @@ class WordSplitter:
         if t[_POS0] in _CONJUGATING_HEADS and t[_POS1] == "非自立可能" and (
                 prev[_POS0] in ("動詞", "形容詞", "助動詞") or (prev[_POS0] == "助詞" and prev[_POS1] == "接続助詞")):
             return False
+        if WordSplitter._is_negated_copula(tokens, i):
+            return False
         return True
+
+    @staticmethod
+    def _is_negated_copula(tokens: list, i: int) -> bool:
+        """ない / ある after で or じゃ, or after an adjective's く-form, optionally with は / も in between:
+        わけでは|なく, 静かでも|ない, 元気では|ありません, 美しくは|ない. These belong to the same phrase, unlike
+        時間は|ない ('there is no time')."""
+        t = tokens[i]
+        if t[_POS1] != "非自立可能" or t[_DICT_FORM] not in ("ない", "ある"):
+            return False
+        j = i - 1
+        if j >= 0 and tokens[j][_POS0] == "助詞" and tokens[j][_SURFACE] in ("は", "も"):
+            j -= 1
+        if j < 0:
+            return False
+        before = tokens[j]
+        return before[_SURFACE] in ("で", "じゃ") or before[_POS0] == "形容詞"
 
     def bunsetsu_span(self, text: str, index: int) -> Optional[BunsetsuSpan]:
         """The bunsetsu (phrase) containing text[index] and the hints the lookup needs to show everything in it,
@@ -201,13 +219,35 @@ class WordSplitter:
         bt = tokens[a:b]
         content_end, runs = self._structure(bt)
 
-        # expressions that cross into the next bunsetsu, from the bunsetsu start and from each particle run
-        # (からかおうと -> とする); offsets are made relative to `start` below
+        # expressions from the bunsetsu start and from each particle run, built from the following words inside
+        # this bunsetsu and into the next one (わけで|は|なく -> わけではない; からかおう|と -> と|し -> とする);
+        # offsets are made relative to `start` below
+        helper_starts = [k for k, t in enumerate(bt) if t[_BEGIN] >= content_end and t[_POS0] == "助動詞"
+                         and (k == 0 or bt[k - 1][_POS0] != "助動詞")]
         expressions = []
-        for s in [0] + [r[0] for r in runs]:
-            forms = self._following_forms(tokens, b, "".join(t[_SURFACE] for t in bt[s:]))
+        starts = [(0, content_end)] + [(r[0], bt[r[1]][_END]) for r in runs] + [(k, bt[k][_END]) for k in helper_starts]
+        for s, s_end in sorted(starts):
+            first = a + s
+            forms = self._following_forms(tokens, first + 1, tokens[first][_SURFACE],
+                                          max_tokens=(b - first - 1) + _MAX_COMPOUND_TOKENS)
+            # only forms reaching past the word they start from (not して, the conjugated する in している)
+            forms = tuple((f, n) for f, n in forms if bt[s][_BEGIN] + n > s_end)
             if forms:
                 expressions.append((bt[s][_BEGIN], forms))
+
+        # helper words after the particles, looked up on their own (なく -> ない in わけではなく,
+        # ありません -> ある in 元気ではありません): from each such word to the next particle / symbol
+        helpers, k = [], 0
+        while k < len(bt):
+            t = bt[k]
+            if t[_BEGIN] >= content_end and t[_POS0] not in ("助詞", "補助記号"):
+                m = k
+                while m + 1 < len(bt) and bt[m + 1][_POS0] not in ("助詞", "補助記号"):
+                    m += 1
+                helpers.append((t[_BEGIN], bt[m][_END] - t[_BEGIN]))
+                k = m + 1
+            else:
+                k += 1
 
         # expressions coming in from the previous bunsetsu that reach into this one (している <- と|し -> とする)
         start = bt[0][_BEGIN]
@@ -237,6 +277,7 @@ class WordSplitter:
             boundaries=frozenset(t[_END] - bt[0][_BEGIN] for t in bt),
             expressions=tuple((rel(pos), forms) for pos, forms in incoming + expressions),
             particle_runs=tuple((rel(bt[s][_BEGIN]), bt[m][_END] - bt[s][_BEGIN]) for s, m in runs),
+            helpers=tuple((rel(pos), length) for pos, length in helpers),
             name_key=first[_SURFACE] if is_noun else None,
             name_reading=first[_READING] if is_noun else "",
             proper=is_noun and first[_POS1] == "固有名詞",
@@ -248,9 +289,12 @@ class WordSplitter:
         The content part runs up to the first non-conjunctive particle or symbol (からかおう|と, 今日|は, している|…);
         conjunctive particles stay in it so て-forms deconjugate as a whole."""
         content_end = bt[0][_END]
+        nominal = bt[0][_POS0] in ("名詞", "形状詞", "代名詞", "接頭辞")
         for t in bt[1:]:
             if t[_POS0] == "補助記号" or (t[_POS0] == "助詞" and t[_POS1] != "接続助詞"):
                 break
+            if nominal and t[_POS0] == "助動詞":
+                break  # the copula after a noun is its own word (学生|じゃない, 天気|です), not a conjugation
             content_end = t[_END]
         runs, k = [], 0
         while k < len(bt):
@@ -265,12 +309,14 @@ class WordSplitter:
         return content_end, runs
 
     @staticmethod
-    def _following_forms(tokens: list, j: int, written: str) -> tuple:
+    def _following_forms(tokens: list, j: int, written: str, max_tokens: int = _MAX_COMPOUND_TOKENS) -> tuple:
         """((form, written length), ...) for `written` continued by tokens[j:] (the next words), each step either as
         written or ending in that word's dictionary form: と + し -> とする has written length 2 (とし)."""
         forms = {}
+        if j <= 0 or j > len(tokens):
+            return ()
         prev_end = tokens[j - 1][_END]
-        for t in tokens[j:j + _MAX_COMPOUND_TOKENS]:
+        for t in tokens[j:j + max_tokens]:
             if t[_BEGIN] != prev_end or t[_POS0] == "補助記号":
                 break
             as_written = written + t[_SURFACE]
@@ -328,6 +374,7 @@ class BunsetsuSpan:
     # bunsetsu (offset < base) and crossing into the next one
     expressions: tuple
     particle_runs: tuple  # ((offset from start, length), ...) of particle runs after the content (と; では)
+    helpers: tuple = ()  # ((offset from start, length), ...) of helper words after the particles (なく; ありません)
     name_key: Optional[str] = None  # the leading noun, for the names dictionary
     name_reading: str = ""
     proper: bool = False

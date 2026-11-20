@@ -89,7 +89,29 @@ def test_bunsetsu_split():
         begin = span.start + span.base
         parts.append(SENTENCE[begin:begin + span.length])
         i = begin + span.length
-    assert parts == ["西片を", "からかおうと", "している…", "わけでは", "なく"]
+    assert parts == ["西片を", "からかおうと", "している…", "わけではなく"]
+
+
+def test_negated_copula_stays_in_one_phrase():
+    from meikipop.ocr.word_splitter import word_splitter
+
+    def phrases(s):
+        out, i = [], 0
+        while i < len(s):
+            span = word_splitter.bunsetsu_span(s, i)
+            begin = span.start + span.base
+            out.append(s[begin:begin + span.length])
+            i = begin + span.length
+        return out
+
+    assert phrases("学生じゃない") == ["学生じゃない"]
+    assert phrases("静かでもない") == ["静かでもない"]
+    assert phrases("美しくはない") == ["美しくはない"]
+    assert phrases("元気ではありません") == ["元気ではありません"]
+    assert phrases("時間はない") == ["時間は", "ない"]  # 'there is no time': ない is its own phrase
+    # the parts after the particles still show up
+    assert phrase("わけではなく、セロ", "な", n=6)[-1] == "ない"
+    assert "じゃない" in phrase("学生じゃない", "じ", n=4)
 
 
 def test_bunsetsu_entries_follow_the_text_order():

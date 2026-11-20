@@ -232,6 +232,12 @@ class Lookup(threading.Thread):
             if e:
                 items.append((e, (offset, offset + self._match_len(e, run, length)), self._PARTICLE))
 
+        for offset, length in b.helpers:  # なく -> ない, ありません -> ある, です
+            part = text[offset:offset + length]
+            e = next((e for e in self.lookup(part) if isinstance(e, DictionaryEntry)), None)
+            if e:  # function words: after the expressions starting at them, like particles (ではない before で)
+                items.append((e, (offset, offset + self._match_len(e, part, length)), self._PARTICLE))
+
         if b.name_key and config.show_names:
             items += self._bunsetsu_names(b, words, content_len)
 
