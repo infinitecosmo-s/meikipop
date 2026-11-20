@@ -76,7 +76,9 @@ class MidaVocr6Provider(OcrProvider):
         full_text = "".join(c.text for c in chars)
         if not JAPANESE_REGEX.search(full_text):
             return None
-        x0, y0, x1, y1 = crop.box
+        # the detected line itself, not the padded crop: the line's true thickness is what tells furigana apart
+        # from main text (postprocessing), and the padding would make thin furigana columns look normal
+        x0, y0, x1, y1 = crop.line_box
         return Paragraph(full_text=full_text, words=words, box=_norm(x0, y0, x1, y1, rgb.shape[1], rgb.shape[0]),
                          is_vertical=crop.vertical)
 

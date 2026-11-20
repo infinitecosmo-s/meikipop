@@ -1,5 +1,6 @@
 # meikipop/ocr/providers/postprocessing.py
 import logging
+import re
 import statistics
 from typing import List, Tuple
 
@@ -94,6 +95,32 @@ def _merge_lines_into_paragraph(lines: List[Paragraph]) -> Paragraph:
     )
 
 
+FURIGANA_CHAR_SIZE_THRESHOLD = 0.7
+_KANA_LINE = re.compile(r"^[぀-ヿー・。、]+$")
+
+
+def _char_size(line: Paragraph, vertical: bool) -> float:
+    """Length along the line per character: about the character size (with spacing)."""
+    length = line.box.height if vertical else line.box.width
+    return length / max(1, len(line.full_text))
+
+
+def _median_char_size(lines: List[Paragraph], vertical: bool) -> float:
+    return statistics.median(_char_size(p, vertical) for p in lines)
+
+
+def _small_kana_line(line: Paragraph, median_char: float, median_thickness: float, vertical: bool) -> bool:
+    """Furigana are kana in much smaller characters. A line's thickness alone misses short furigana (a single
+    small kana has a squarish box nearly as thick as a main text line), so character sizes are compared too:
+    much smaller characters, or somewhat smaller characters in a somewhat thinner line (a lone furigana い:
+    ~0.8 thickness, ~0.73 character size; a main text line like ねー。 stays above ~0.9 on both)."""
+    if not _KANA_LINE.match(line.full_text):
+        return False
+    char = _char_size(line, vertical) / median_char
+    thickness = (line.box.width if vertical else line.box.height) / median_thickness
+    return char < FURIGANA_CHAR_SIZE_THRESHOLD or (char < 0.8 and thickness < 0.88)
+
+
 # NEW FUNCTION TO DETECT FURIGANA
 def _classify_lines_by_size(
         lines: List[Paragraph]
@@ -120,8 +147,9 @@ def _classify_lines_by_size(
         if len(widths) > 1:
             median_width = statistics.median(widths)
             threshold = median_width * FURIGANA_VERTICAL_WIDTH_THRESHOLD
+            median_char = _median_char_size(vertical_lines, vertical=True)
             for line in vertical_lines:
-                if line.box.width < threshold:
+                if line.box.width < threshold or _small_kana_line(line, median_char, median_width, vertical=True):
                     furigana_lines.append(line)
                 else:
                     main_lines.append(line)
@@ -135,8 +163,9 @@ def _classify_lines_by_size(
         if len(heights) > 1:
             median_height = statistics.median(heights)
             threshold = median_height * FURIGANA_HORIZONTAL_HEIGHT_THRESHOLD
+            median_char = _median_char_size(horizontal_lines, vertical=False)
             for line in horizontal_lines:
-                if line.box.height < threshold:
+                if line.box.height < threshold or _small_kana_line(line, median_char, median_height, vertical=False):
                     furigana_lines.append(line)
                 else:
                     main_lines.append(line)
