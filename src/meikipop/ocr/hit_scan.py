@@ -3,8 +3,10 @@ import logging
 import threading
 from typing import List
 
+from meikipop.config.config import config
 from meikipop.gui.magpie_manager import magpie_manager
 from meikipop.ocr.interface import Paragraph
+from meikipop.ocr.word_splitter import word_splitter
 
 logger = logging.getLogger(__name__)  # Get the logger
 
@@ -107,8 +109,12 @@ class HitScanner(threading.Thread):
             if final_char_index >= len(full_text):
                 continue
 
+            lookup_end = None
+            if config.smart_word_start:
+                final_char_index, lookup_end = word_splitter.word_span(full_text, final_char_index)
+
             character = full_text[final_char_index]
-            lookup_string = full_text[final_char_index:]
+            lookup_string = full_text[final_char_index:lookup_end]
             hit_scan_result = (full_text, final_char_index, character,
                                lookup_string)  # this may be interesting for debugging, but only lookup_string is really relevant
             break

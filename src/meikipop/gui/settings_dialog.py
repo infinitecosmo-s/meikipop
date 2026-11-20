@@ -98,6 +98,15 @@ class SettingsDialog(QDialog):
         self.max_lookup_spin.setValue(config.max_lookup_length)
         core_layout.addRow("Max Lookup Length:", self.max_lookup_spin)
 
+        self.smart_word_start_check = QCheckBox()
+        self.smart_word_start_check.setChecked(config.smart_word_start)
+        self.smart_word_start_check.setToolTip(
+            "Split the sentence into words and look up the whole word under the cursor,\n"
+            "even when hovering its middle (e.g. 気 in 天気 looks up 天気).\n"
+            "Turn off to look up from exactly the hovered character."
+        )
+        core_layout.addRow("Look Up Whole Word:", self.smart_word_start_check)
+
         if IS_WINDOWS:
             self.magpie_check = QCheckBox()
             self.magpie_check.setChecked(config.magpie_compatibility)
@@ -423,6 +432,7 @@ class SettingsDialog(QDialog):
         config.hotkey = self.hotkey_combo.currentText()
         config.glens_low_bandwidth = self.glens_compression_check.isChecked()
         config.max_lookup_length = self.max_lookup_spin.value()
+        config.smart_word_start = self.smart_word_start_check.isChecked()
         config.auto_scan_mode = self.auto_scan_check.isChecked()
         config.auto_scan_interval_seconds = self.auto_scan_interval_spin.value()
         config.auto_scan_mode_lookups_without_hotkey = self.auto_scan_no_hotkey_check.isChecked()
