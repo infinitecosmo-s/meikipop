@@ -128,6 +128,14 @@ class SettingsDialog(QDialog):
         )
         core_layout.addRow("Highlight Lookup:", self.highlight_check)
 
+        self.phrase_outlines_check = QCheckBox()
+        self.phrase_outlines_check.setChecked(config.phrase_outlines)
+        self.phrase_outlines_check.setToolTip(
+            "Draw a thin outline around every phrase (bunsetsu) of the scanned text, all the time,\n"
+            "so you can see how the text is split. Updates with each scan.\n"
+            "Needs Windows 10 version 2004 or later (the outlines are hidden from meikipop's screenshots).")
+        core_layout.addRow("Phrase Outlines:", self.phrase_outlines_check)
+
         self.show_names_check = QCheckBox()
         self.show_names_check.setChecked(config.show_names)
         self.show_names_check.setToolTip(
@@ -477,6 +485,7 @@ class SettingsDialog(QDialog):
         config.lookup_mode = self.lookup_mode_map.get(self.lookup_mode_combo.currentText(), "bunsetsu")
         config.max_entries = self.max_entries_spin.value()
         config.highlight_lookup = self.highlight_check.isChecked()
+        config.phrase_outlines = self.phrase_outlines_check.isChecked()
         config.show_names = self.show_names_check.isChecked()
         config.auto_scan_mode = self.auto_scan_check.isChecked()
         config.auto_scan_interval_seconds = self.auto_scan_interval_spin.value()

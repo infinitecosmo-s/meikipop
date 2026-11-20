@@ -193,6 +193,26 @@ class WordSplitter:
         before = tokens[j]
         return before[_SURFACE] in ("で", "じゃ") or before[_POS0] == "形容詞"
 
+    def bunsetsu_bounds(self, text: str) -> list:
+        """[(start, end), ...] of every bunsetsu in text (empty if the word splitter is unavailable)."""
+        if not text:
+            return []
+        with self._lock:
+            if not self._load():
+                return []
+            try:
+                tokens = self._tokens(text)
+            except Exception as e:
+                logger.warning(f"Word splitter failed on '{text}': {e}")
+                return []
+        bounds = []
+        for i, t in enumerate(tokens):
+            if self._starts_bunsetsu(tokens, i):
+                bounds.append([t[_BEGIN], t[_END]])
+            elif bounds:
+                bounds[-1][1] = t[_END]
+        return [tuple(b) for b in bounds]
+
     def bunsetsu_span(self, text: str, index: int) -> Optional[BunsetsuSpan]:
         """The bunsetsu (phrase) containing text[index] and the hints the lookup needs to show everything in it,
         or None if the word splitter is unavailable."""

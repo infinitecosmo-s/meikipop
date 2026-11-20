@@ -10,7 +10,7 @@ from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel, QFrame, QApplication
 
 from meikipop.config.config import config, IS_MACOS
 from meikipop.dictionary.lookup import DictionaryEntry, KanjiEntry
-from meikipop.gui.highlight import HighlightOverlay
+from meikipop.gui.highlight import HighlightOverlay, PhraseOutlineOverlay
 from meikipop.gui.magpie_manager import magpie_manager
 from meikipop.gui.panel import ResultsPanel
 
@@ -30,6 +30,8 @@ class Popup(QWidget):
         self._latest_data = None
         self._latest_highlight = None
         self._last_latest_data = None
+        self._phrase_outlines = ()
+        self.outline_overlay = PhraseOutlineOverlay()
         self.highlight_overlay = HighlightOverlay()
         self.panel = ResultsPanel(lambda entries: self._calculate_content_and_size_char_count(entries)[0],
                                   on_close=self._panel_closed)
@@ -166,6 +168,23 @@ class Popup(QWidget):
         with self._data_lock:
             return self._latest_data
 
+    def set_phrase_outlines(self, outlines):
+        """Called by the hit scanner with the phrase boxes of each new OCR result."""
+        with self._data_lock:
+            self._phrase_outlines = outlines
+
+    def _update_outlines(self):
+        """Outline every phrase on screen, if enabled. Only where the overlay is hidden from screenshots, since it
+        stays on screen while they are taken."""
+        with self._data_lock:
+            outlines = self._phrase_outlines
+        show = config.phrase_outlines and config.is_enabled and self.outline_overlay.excluded
+        if show and self.outline_overlay.set_outlines(outlines):
+            if not self.outline_overlay.isVisible():
+                self.outline_overlay.show()
+        else:
+            self.outline_overlay.hide()
+
     def _update_highlight(self, active: bool):
         """Show the on-screen highlight for the current lookup while a lookup is active. Unless the overlay is
         hidden from screenshots, it is only shown with the popup (which pauses screenshots)."""
@@ -213,6 +232,7 @@ class Popup(QWidget):
         else:
             self.hide_popup()
         self._update_panel(active, latest_data)
+        self._update_outlines()
         self._update_highlight(active)
 
         mouse_pos = QCursor.pos()

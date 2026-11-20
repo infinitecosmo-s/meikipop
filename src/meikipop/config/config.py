@@ -42,6 +42,7 @@ class Config:
             'lookup_mode': 'bunsetsu',  # off / word / bunsetsu
             'show_names': True,
             'highlight_lookup': True,
+            'phrase_outlines': False,  # outline every bunsetsu on screen
             'max_entries': 4,
             'result_display': 'popup',  # popup / panel / both
             'panel_geometry': '40,80,420,320',  # x,y,w,h of the results panel

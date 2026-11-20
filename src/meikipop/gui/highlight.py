@@ -59,6 +59,72 @@ def _lines(boxes, vertical: bool) -> List[QRectF]:
     return out
 
 
+def _to_logical_rects(boxes) -> List[QRectF]:
+    rects = []
+    for x, y, w, h in boxes:
+        lx0, ly0 = physical_to_logical(x, y)
+        lx1, ly1 = physical_to_logical(x + w, y + h)
+        rects.append(QRectF(QPointF(lx0, ly0), QPointF(lx1, ly1)))
+    return rects
+
+
+class PhraseOutlineOverlay(QWidget):
+    """Thin outlines around every bunsetsu of the current OCR result, so the phrases are visible at a glance.
+    Only usable where it can be excluded from screen capture (it stays on screen while screenshots are taken)."""
+
+    def __init__(self):
+        super().__init__()
+        self.setWindowFlags(
+            Qt.WindowType.FramelessWindowHint |
+            Qt.WindowType.WindowStaysOnTopHint |
+            Qt.WindowType.Tool |
+            Qt.WindowType.WindowTransparentForInput |
+            Qt.WindowType.WindowDoesNotAcceptFocus |
+            Qt.WindowType.X11BypassWindowManagerHint
+        )
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
+        self.excluded = exclude_from_capture(self)
+        self._outlines = None
+        self._rects: List[Tuple[QRectF, bool]] = []
+
+    def set_outlines(self, outlines) -> bool:
+        """outlines: ((character boxes, vertical), ...) per phrase. Returns whether there is anything to show."""
+        if outlines is self._outlines:
+            return bool(self._rects)
+        self._outlines = outlines
+        rects = []
+        for boxes, vertical in outlines or ():
+            for r in _lines(_to_logical_rects(boxes), vertical):
+                rects.append((r, vertical))
+        if not rects:
+            self._rects = []
+            return False
+        bounds = rects[0][0]
+        for r, _ in rects[1:]:
+            bounds = bounds.united(r)
+        geo = bounds.toAlignedRect().adjusted(-_PAD, -_PAD, _PAD, _PAD)
+        offset = QPointF(geo.topLeft())
+        self._rects = [(r.translated(-offset), v) for r, v in rects]
+        self.setGeometry(geo)
+        self.update()
+        return True
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        color = QColor(config.color_highlight_word)
+        color.setAlpha(150)
+        painter.setPen(QPen(color, 1.2))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        for r, vertical in self._rects:
+            # a little wider across the line, a little shorter along it, so neighbouring phrases show a gap
+            box = r.adjusted(-2, 1.5, 2, -1.5) if vertical else r.adjusted(1.5, -2, -1.5, 2)
+            painter.drawRoundedRect(box, 3, 3)
+        painter.end()
+
+
 class HighlightOverlay(QWidget):
     def __init__(self):
         super().__init__()
@@ -90,17 +156,9 @@ class HighlightOverlay(QWidget):
             self._unit_lines, self._match_lines = [], []
             return False
 
-        def to_rects(boxes):
-            rects = []
-            for x, y, w, h in boxes:
-                lx0, ly0 = physical_to_logical(x, y)
-                lx1, ly1 = physical_to_logical(x + w, y + h)
-                rects.append(QRectF(QPointF(lx0, ly0), QPointF(lx1, ly1)))
-            return rects
-
         self._vertical = highlight.vertical
-        unit = _lines(to_rects(highlight.unit), self._vertical)
-        match = _lines(to_rects(highlight.match), self._vertical)
+        unit = _lines(_to_logical_rects(highlight.unit), self._vertical)
+        match = _lines(_to_logical_rects(highlight.match), self._vertical)
         bounds = unit[0]
         for r in unit[1:] + match:
             bounds = bounds.united(r)

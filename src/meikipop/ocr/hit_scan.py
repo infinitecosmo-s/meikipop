@@ -1,5 +1,6 @@
 # meikipop/ocr/hit_scan.py
 import logging
+import re
 import threading
 from typing import List
 
@@ -56,13 +57,43 @@ def char_boxes(para: Paragraph, geometry) -> tuple:
     return tuple(boxes) if len(boxes) == len(para.full_text) else ()
 
 
+_SYMBOLS_ONLY = re.compile(r"^[\W_ー…・。、！？「」『』（）]*$")
+
+
+def phrase_outlines(paragraphs, geometry) -> tuple:
+    """((character boxes, vertical), ...) for every bunsetsu of the OCR result, for the phrase outlines. Phrases that
+    are only punctuation are left out."""
+    out = []
+    for para in paragraphs or ():
+        boxes = char_boxes(para, geometry)
+        if not boxes:
+            continue
+        for start, end in word_splitter.bunsetsu_bounds(para.full_text):
+            if end > start and not _SYMBOLS_ONLY.match(para.full_text[start:end]):
+                out.append((boxes[start:end], para.is_vertical))
+    return tuple(out)
+
+
 class HitScanner(threading.Thread):
-    def __init__(self, shared_state, input_loop, screen_manager):
+    def __init__(self, shared_state, input_loop, screen_manager, popup_window=None):
         super().__init__(daemon=True, name="HitScanner")
         self.shared_state = shared_state
         self.input_loop = input_loop
         self.screen_manager = screen_manager
+        self.popup_window = popup_window  # receives the phrase outlines of each new OCR result
         self.last_ocr_result = None
+        self._outline_key = None
+
+    def _publish_outlines(self, ocr_result):
+        """Send the phrase outlines of a new OCR result (or after the setting was turned on) to the popup."""
+        key = (id(ocr_result), config.phrase_outlines)
+        if self.popup_window is None or (ocr_result is self.last_ocr_result and key == self._outline_key):
+            return
+        self.last_ocr_result, self._outline_key = ocr_result, key
+        outlines = ()
+        if config.phrase_outlines and ocr_result:
+            outlines = phrase_outlines(ocr_result, self.screen_manager.get_scan_geometry())
+        self.popup_window.set_phrase_outlines(outlines)
 
     def run(self):
         logger.debug("HitScanner thread started.")
@@ -71,6 +102,7 @@ class HitScanner(threading.Thread):
                 ocr_result = self.shared_state.hit_scan_queue.get()
                 if not self.shared_state.running: break
                 logger.debug("HitScanner: Triggered")
+                self._publish_outlines(ocr_result)
                 hit_scan_result = self.hit_scan(ocr_result)
                 self.shared_state.lookup_queue.put(hit_scan_result)
             except:
