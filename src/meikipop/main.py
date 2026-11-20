@@ -15,6 +15,7 @@ from meikipop.gui.popup import Popup
 from meikipop.gui.tray import TrayIcon
 from meikipop.ocr.hit_scan import HitScanner
 from meikipop.ocr.ocr import OcrProcessor
+from meikipop.screenshot.change_watcher import ScreenChangeWatcher
 from meikipop.screenshot.screenmanager import ScreenManager
 from meikipop.utils.lastest_queue import LatestValueQueue
 
@@ -43,6 +44,10 @@ class SharedState:
         # screen lock - used by screen manager and popup
         self.screen_lock = threading.RLock()
 
+        # the screenshot of the latest OCR result, and a thumbnail of the one the phrase outlines are drawn for
+        self.ocr_frame = None
+        self.outline_reference = None
+
 
 def run_gui():
     setup_logging()
@@ -64,7 +69,9 @@ def run_gui():
     hit_scanner = HitScanner(shared_state, input_loop, screen_manager, popup_window)
     tray_icon = TrayIcon(screen_manager, ocr_processor, popup_window, input_loop, lookup)
 
-    for t in [lookup, hit_scanner, ocr_processor, screen_manager, input_loop]:
+    change_watcher = ScreenChangeWatcher(shared_state, screen_manager, popup_window)
+
+    for t in [lookup, hit_scanner, ocr_processor, screen_manager, input_loop, change_watcher]:
         t.start()
 
     ready_message = f"""

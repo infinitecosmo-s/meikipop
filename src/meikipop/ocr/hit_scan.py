@@ -9,6 +9,7 @@ from meikipop.dictionary.lookup import LookupRequest
 from meikipop.gui.magpie_manager import magpie_manager
 from meikipop.ocr.interface import Paragraph
 from meikipop.ocr.word_splitter import word_splitter
+from meikipop.screenshot.change_watcher import thumbnail
 
 logger = logging.getLogger(__name__)  # Get the logger
 
@@ -93,6 +94,9 @@ class HitScanner(threading.Thread):
         outlines = ()
         if config.phrase_outlines and ocr_result:
             outlines = phrase_outlines(ocr_result, self.screen_manager.get_scan_geometry())
+        # what the screen looked like for these outlines; the change watcher hides them once it differs
+        frame = getattr(self.shared_state, "ocr_frame", None)
+        self.shared_state.outline_reference = thumbnail(frame) if outlines and frame is not None else None
         self.popup_window.set_phrase_outlines(outlines)
 
     def run(self):

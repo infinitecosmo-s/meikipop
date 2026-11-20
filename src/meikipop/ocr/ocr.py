@@ -43,6 +43,8 @@ class OcrProcessor(threading.Thread):
                     f"{self.ocr_backend.NAME} found {len(ocr_result) if ocr_result else 0} paragraphs in {(time.perf_counter() - start_time):.3f}s.")
                 # todo keep last ocr result?
 
+                # the screenshot this result came from, so the phrase outlines can be hidden once the screen changes
+                self.shared_state.ocr_frame = screenshot
                 self.shared_state.hit_scan_queue.put(ocr_result)
             except:
                 logger.exception("An unexpected error occurred in the ocr loop. Continuing...")
