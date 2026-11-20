@@ -153,7 +153,8 @@ class Lookup(threading.Thread):
         boxes = request.boxes
         top = next((span for entry, span in zip(results, spans) if isinstance(entry, DictionaryEntry) and span), None)
         if request.bunsetsu is not None:
-            unit = boxes[:request.bunsetsu.length]
+            b = request.bunsetsu
+            unit = boxes[b.base:b.base + b.length]
         elif top:
             unit = boxes[top[0]:top[1]]
         else:
@@ -171,16 +172,21 @@ class Lookup(threading.Thread):
                  if isinstance(e, DictionaryEntry) else None for e in results]
         return results, spans
 
+    # kinds of entries in a bunsetsu lookup; entries starting at the same place are shown in this order
+    _NAME_FIRST, _WORD, _NAME, _EXPRESSION, _LONGER, _PARTICLE = range(6)
+
     def _lookup_bunsetsu(self, request: LookupRequest) -> Tuple[List, List]:
-        """Everything in the hovered bunsetsu, in this order:
-          a) expressions crossing into the next bunsetsu that are built from the actual words, earliest start
-             first (わけではない, ではない; とする)
-          b) the content word, with conjugations undone (からかう)
-          c) a longer word ending inside the bunsetsu (今日は 'hello' after 今日)
-          d) the particles / particle expressions after the content (と; では)
-        Names for a leading noun follow the usual names rules."""
+        """Everything in the hovered bunsetsu, in the order the words appear in the text. Entries are:
+          - the content word, with conjugations undone (からかう)
+          - expressions built from the actual words that cross a bunsetsu boundary: into the next bunsetsu
+            (からかおうと -> とする; わけでは -> わけではない, ではない) or in from the previous one (している -> とする)
+          - a longer word ending inside the bunsetsu (今日は 'hello', after 今日)
+          - the particles after the content word (と; では)
+        They are sorted by where they start in the text; at the same start the word comes first, then the
+        expressions, the longer word and the particle. So からかおうと shows からかう, とする, として, と, and している
+        shows とする (starting at と, before it) and then する. Names for a leading noun follow the usual rules."""
         b, text = request.bunsetsu, request.text
-        items = []  # (entry, (start, end))
+        items = []  # (entry, (start, end), kind)
 
         for offset, forms in b.expressions:
             lengths = dict(forms)
@@ -196,47 +202,63 @@ class Lookup(threading.Thread):
                 if (isinstance(e, DictionaryEntry) and e.written_form in lengths
                         and e.written_form not in seen_forms):
                     seen_forms.add(e.written_form)  # one entry per expression (the best ranked)
-                    items.append((e, (offset, offset + lengths[e.written_form])))
+                    items.append((e, (offset, offset + lengths[e.written_form]), self._EXPRESSION))
 
-        content = text[:b.content_len]
+        base = b.base
+        content = text[base:base + b.content_len]
         content_results = self.lookup(content)
         words = [e for e in content_results if isinstance(e, DictionaryEntry)]
         content_len = self._match_len(words[0], content, b.content_len) if words else 0
+        n_words = 0
         for e in words:
             n = self._match_len(e, content, b.content_len)
             if n == content_len:  # homographs of the best match only, not shorter prefixes (から in からかおう)
-                items.append((e, (0, n)))
-            if len([1 for i in items if i[1] == (0, content_len)]) >= 2:
-                break  # at most two readings / spellings of the content word
+                items.append((e, (base, base + n), self._WORD))
+                n_words += 1
+                if n_words >= 2:
+                    break  # at most two readings / spellings of the content word
 
-        whole = text[:b.length]
+        whole = text[base:base + b.length]
         for e in self.lookup(whole):
             if isinstance(e, DictionaryEntry):
                 n = self._match_len(e, whole, 0)
                 if n > content_len and n in b.boundaries:
-                    items.append((e, (0, n)))
+                    items.append((e, (base, base + n), self._LONGER))
                     break
 
         for offset, length in b.particle_runs:
             run = text[offset:offset + length]
             e = next((e for e in self.lookup(run) if isinstance(e, DictionaryEntry)), None)
             if e:
-                items.append((e, (offset, offset + self._match_len(e, run, length))))
+                items.append((e, (offset, offset + self._match_len(e, run, length)), self._PARTICLE))
 
+        if b.name_key and config.show_names:
+            items += self._bunsetsu_names(b, words, content_len)
+
+        items.sort(key=lambda item: (item[1][0], item[2]))  # stable: lookup ranking within the same kind
         entries, spans = [], []
-        for e, span in items:
+        for e, span, _ in items:
             if e not in entries:
                 entries.append(e)
                 spans.append(span)
 
-        if b.name_key and config.show_names:
-            with_names = self._add_names(entries, b)
-            span_of = {id(e): s for e, s in zip(entries, spans)}
-            spans = [span_of.get(id(e), (0, len(b.name_key))) for e in with_names]
-            entries = with_names
-
         kanji = [e for e in content_results if not isinstance(e, DictionaryEntry)]
         return entries + kanji, spans + [None] * len(kanji)
+
+    def _bunsetsu_names(self, b, words: List, content_len: int) -> list:
+        """Name entries for the bunsetsu's leading noun, as (entry, span, kind) items: before the word for proper
+        nouns (高木さん -> Takagi before 'tall tree') unless a longer word contains the name (東京大学 before Tokyo);
+        after it otherwise, and only if the ordinary dictionary has no entry for exactly that noun (西 'west')."""
+        key = b.name_key
+        exact = any(e.written_form == key or e.reading == key for e in words)
+        if exact and not b.proper:
+            return []
+        kind = self._NAME_FIRST if b.proper and content_len <= len(key) else self._NAME
+        span = (b.base, b.base + len(key))
+        return [(DictionaryEntry(id=NAME_ENTRY_ID, written_form=written, reading=reading,
+                                 senses=[{'glosses': [gloss], 'pos': [], 'tags': ['name']}],
+                                 freq=DEFAULT_FREQ, deconjugation_process=()), span, kind)
+                for written, reading, gloss in name_dictionary.lookup(key, b.name_reading)]
 
     def lookup_request(self, request: LookupRequest) -> List:
         if request.bunsetsu is not None:

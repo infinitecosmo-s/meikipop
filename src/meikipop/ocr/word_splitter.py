@@ -199,18 +199,59 @@ class WordSplitter:
         while b < len(tokens) and not self._starts_bunsetsu(tokens, b):
             b += 1
         bt = tokens[a:b]
-        start = bt[0][_BEGIN]
-        rel = lambda pos: pos - start  # noqa: E731
+        content_end, runs = self._structure(bt)
 
-        # the content part: everything up to the first non-conjunctive particle or symbol (からかおう|と, 今日|は,
-        # している|…); conjunctive particles stay in it so て-forms deconjugate as a whole
+        # expressions that cross into the next bunsetsu, from the bunsetsu start and from each particle run
+        # (からかおうと -> とする); offsets are made relative to `start` below
+        expressions = []
+        for s in [0] + [r[0] for r in runs]:
+            forms = self._following_forms(tokens, b, "".join(t[_SURFACE] for t in bt[s:]))
+            if forms:
+                expressions.append((bt[s][_BEGIN], forms))
+
+        # expressions coming in from the previous bunsetsu that reach into this one (している <- と|し -> とする)
+        start = bt[0][_BEGIN]
+        incoming = []
+        if a > 0:
+            p = a - 1
+            while not self._starts_bunsetsu(tokens, p):
+                p -= 1
+            pt = tokens[p:a]
+            _, prev_runs = self._structure(pt)
+            for s in [0] + [r[0] for r in prev_runs]:
+                forms = self._following_forms(tokens, a, "".join(t[_SURFACE] for t in pt[s:]))
+                if forms:
+                    incoming.append((pt[s][_BEGIN], forms))
+            if incoming:
+                start = pt[0][_BEGIN]  # the lookup text starts at the previous bunsetsu
+        rel = lambda pos: pos - start  # noqa: E731
+        base = rel(bt[0][_BEGIN])
+
+        first = bt[0]
+        is_noun = first[_POS0] == "名詞"
+        return BunsetsuSpan(
+            start=start,
+            base=base,
+            length=bt[-1][_END] - bt[0][_BEGIN],
+            content_len=content_end - bt[0][_BEGIN],
+            boundaries=frozenset(t[_END] - bt[0][_BEGIN] for t in bt),
+            expressions=tuple((rel(pos), forms) for pos, forms in incoming + expressions),
+            particle_runs=tuple((rel(bt[s][_BEGIN]), bt[m][_END] - bt[s][_BEGIN]) for s, m in runs),
+            name_key=first[_SURFACE] if is_noun else None,
+            name_reading=first[_READING] if is_noun else "",
+            proper=is_noun and first[_POS1] == "固有名詞",
+        )
+
+    @staticmethod
+    def _structure(bt: list) -> tuple:
+        """(end of the content part, [(first, last) token index of each particle run after it]) of a bunsetsu.
+        The content part runs up to the first non-conjunctive particle or symbol (からかおう|と, 今日|は, している|…);
+        conjunctive particles stay in it so て-forms deconjugate as a whole."""
         content_end = bt[0][_END]
         for t in bt[1:]:
             if t[_POS0] == "補助記号" or (t[_POS0] == "助詞" and t[_POS1] != "接続助詞"):
                 break
             content_end = t[_END]
-
-        # particle runs after the content (と, では)
         runs, k = [], 0
         while k < len(bt):
             if bt[k][_POS0] == "助詞" and bt[k][_BEGIN] >= content_end:
@@ -221,28 +262,7 @@ class WordSplitter:
                 k = m + 1
             else:
                 k += 1
-
-        # expressions that cross into the next bunsetsu, from the bunsetsu start and from each particle run
-        expressions = []
-        for s in [0] + [r[0] for r in runs]:
-            written = "".join(t[_SURFACE] for t in bt[s:])
-            forms = self._following_forms(tokens, b, written)
-            if forms:
-                expressions.append((rel(bt[s][_BEGIN]), forms))
-
-        first = bt[0]
-        is_noun = first[_POS0] == "名詞"
-        return BunsetsuSpan(
-            start=start,
-            length=rel(bt[-1][_END]),
-            content_len=rel(content_end),
-            boundaries=frozenset(rel(t[_END]) for t in bt),
-            expressions=tuple(expressions),
-            particle_runs=tuple((rel(bt[s][_BEGIN]), bt[m][_END] - bt[s][_BEGIN]) for s, m in runs),
-            name_key=first[_SURFACE] if is_noun else None,
-            name_reading=first[_READING] if is_noun else "",
-            proper=is_noun and first[_POS1] == "固有名詞",
-        )
+        return content_end, runs
 
     @staticmethod
     def _following_forms(tokens: list, j: int, written: str) -> tuple:
@@ -297,13 +317,17 @@ class WordSpan:
 
 @dataclass(frozen=True)
 class BunsetsuSpan:
-    """A bunsetsu (phrase) under the cursor. All offsets are relative to `start`."""
-    start: int  # where the bunsetsu starts in the text
-    length: int
-    content_len: int  # the content word with its conjugation (からかおう in からかおうと)
-    boundaries: frozenset  # offsets where words inside the bunsetsu end
-    expressions: tuple  # ((offset, ((form, written length from offset), ...)), ...) crossing into the next bunsetsu
-    particle_runs: tuple  # ((offset, length), ...) of particle runs after the content (と; では)
+    """A bunsetsu (phrase) under the cursor. The lookup text starts at `start`: the previous bunsetsu if expressions
+    reach in from it, otherwise this one. `base` is where this bunsetsu begins in the lookup text."""
+    start: int  # where the lookup text starts in the paragraph
+    base: int  # where the hovered bunsetsu starts, relative to `start`
+    length: int  # of the hovered bunsetsu
+    content_len: int  # the content word with its conjugation (からかおう in からかおうと), from `base`
+    boundaries: frozenset  # where words inside the bunsetsu end, relative to `base`
+    # ((offset from start, ((form, written length from offset), ...)), ...): expressions reaching in from the previous
+    # bunsetsu (offset < base) and crossing into the next one
+    expressions: tuple
+    particle_runs: tuple  # ((offset from start, length), ...) of particle runs after the content (と; では)
     name_key: Optional[str] = None  # the leading noun, for the names dictionary
     name_reading: str = ""
     proper: bool = False

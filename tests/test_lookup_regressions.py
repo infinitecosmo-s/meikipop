@@ -86,34 +86,44 @@ def test_bunsetsu_split():
     parts, i = [], 0
     while i < len(SENTENCE):
         span = word_splitter.bunsetsu_span(SENTENCE, i)
-        parts.append(SENTENCE[span.start:span.start + span.length])
-        i = span.start + span.length
+        begin = span.start + span.base
+        parts.append(SENTENCE[begin:begin + span.length])
+        i = begin + span.length
     assert parts == ["西片を", "からかおうと", "している…", "わけでは", "なく"]
 
 
-def test_bunsetsu_shows_expression_then_content_then_particle():
-    assert phrase(SENTENCE, "と") == ["とする", "として", "からかう"]
-    assert phrase(SENTENCE, "か", n=10)[-1] == "と"  # the particle comes last
-    assert everywhere(SENTENCE, "からかおうと", n=1) == {("とする",)}  # any character means the same
-
-
-def test_bunsetsu_expression_from_its_start_comes_first():
-    assert phrase(SENTENCE, "わ", n=2) == ["わけではない", "ではない"]
+def test_bunsetsu_entries_follow_the_text_order():
+    # からか|おう -> と|し: the verb first, then the expressions starting at と, then the particle itself
+    assert phrase(SENTENCE, "と", n=4) == ["からかう", "とする", "として", "と"]
+    assert everywhere(SENTENCE, "からかおうと", n=4) == {("からかう", "とする", "として", "と")}  # any character
+    # わけ first, then the expression starting at わけ, then those starting at で
+    results = phrase(SENTENCE, "わ", n=6)
+    assert results[0] in ("分け", "訳")
+    assert results.index("わけではない") < results.index("ではない") < results.index("では")
     assert len(everywhere(SENTENCE, "わけでは", n=4)) == 1
+
+
+def test_bunsetsu_expression_reaching_in_from_the_previous_phrase():
+    # している: とする starts at と in the previous phrase, so it comes before する
+    results = phrase(SENTENCE, "し", n=4)
+    assert results[0] == "とする" and "する" in results
+    assert results.index("とする") < results.index("する")
 
 
 def test_bunsetsu_content_before_longer_greeting():
     results = phrase("今日は良い天気ですね", "日", n=5)
     assert results[0] == "今日" and "今日" in results and results.index("今日は") > 0  # 今日は = こんにちは
     assert len(everywhere("今日は良い天気ですね", "今日は", n=3)) == 1
-    assert phrase("今日は良い天気ですね", "す", n=1) == ["天気"]
+    # 良い天気 ('fine weather') reaches in from the previous phrase 良い, so it comes before 天気
+    assert phrase("今日は良い天気ですね", "す", n=2) == ["良い天気", "天気"]
 
 
 def test_bunsetsu_conjugations_and_particles():
     assert phrase("食べさせられなかった", "な", n=1) == ["食べる"]
     assert phrase("魔法少女になってよ！", "に", n=2)[0] == "魔法少女"
     assert "担う" not in phrase("魔法少女になってよ！", "に", n=10)
-    assert phrase("気がつかなかった", "が", n=2)[0] == "気がつく"  # 気 + が + つく(dictionary form)
+    results = phrase("気がつかなかった", "が", n=4)  # 気 + が + つく(dictionary form)
+    assert results[0] == "気" and results.index("気がつく") < results.index("が")
 
 
 def _names_available() -> bool:
