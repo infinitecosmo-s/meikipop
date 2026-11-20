@@ -47,6 +47,7 @@ class LookupRequest:
     name_key: Optional[str] = None
     name_reading: str = ""
     proper: bool = False
+    earlier: tuple = ()  # ((prefix, cut, compounds, ends), ...): earlier particle starts, see WordSpan.earlier
 
 
 @dataclass
@@ -98,13 +99,27 @@ class Lookup(threading.Thread):
                 logger.exception("An unexpected error occurred in the lookup loop. Continuing...")
         logger.debug("Lookup thread stopped.")
 
+    def _particle_lookup(self, text: str, cut: int, compounds: frozenset) -> List:
+        """Allowed compound matches first (e.g. とする for と in としている), then the plain lookup up to `cut`."""
+        allowed = [e for e in self.lookup(text)
+                   if isinstance(e, DictionaryEntry)
+                   and (e.written_form in compounds or (e.reading and e.reading in compounds))]
+        return allowed + [e for e in self.lookup(text[:cut]) if e not in allowed]
+
     def lookup_request(self, request: LookupRequest) -> List:
         if request.cut is not None:
-            # allowed compound matches first (e.g. とする for と in としている), then the plain short lookup
-            allowed = [e for e in self.lookup(request.text)
-                       if isinstance(e, DictionaryEntry)
-                       and (e.written_form in request.compounds or (e.reading and e.reading in request.compounds))]
-            results = allowed + [e for e in self.lookup(request.text[:request.cut]) if e not in allowed]
+            results = self._particle_lookup(request.text, request.cut, request.compounds)
+            # an entry starting at an earlier particle of the same run wins if it reaches the hovered one
+            # (ではない for は in ではなく)
+            for prefix, cut, compounds, ends in request.earlier:
+                text = prefix + request.text
+                reaching = [e for e in self._particle_lookup(text, cut, compounds)
+                            if isinstance(e, DictionaryEntry) and any(
+                                form and (form in compounds or (text.startswith(form) and len(form) in ends))
+                                for form in (e.written_form, e.reading))]
+                if reaching:
+                    results = reaching + [e for e in results if e not in reaching]
+                    break
         else:
             results = self.lookup(request.text)
         if request.name_key and config.show_names:

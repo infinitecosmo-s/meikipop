@@ -120,13 +120,33 @@ class WordSplitter:
         longer dictionary matches are still allowed when they are built from the following words themselves: the
         particle run, then the next words as written, optionally ending in a word's dictionary form. This keeps
         と + し -> とする ("to try to") and に + ついて -> について, while rejecting matches that only share spelling
-        across word boundaries, like に + なっ -> 担う (になう) or が + つか -> 月 (がつ)."""
+        across word boundaries, like に + なっ -> 担う (になう) or が + つか -> 月 (がつ).
+
+        Particles earlier in the same run are offered as alternative starts (`earlier`): the lookup uses one only if
+        an entry from there reaches the hovered particle, so は in で|は|なく finds ではない, while さぁ in で|も|さぁ
+        keeps さあ (でも does not reach it)."""
         k = i
         while k + 1 < len(tokens) and tokens[k + 1][2] == "助詞" and tokens[k + 1][0] == tokens[k][1]:
             k += 1
-        start, run_end = tokens[i][0], tokens[k][1]
-        run = "".join(t[4] for t in tokens[i:k + 1])
+        h = i
+        while h > 0 and tokens[h - 1][2] == "助詞" and tokens[h - 1][1] == tokens[h][0]:
+            h -= 1
 
+        cut, compounds = WordSplitter._run_compounds(tokens, i, k)
+        earlier = []
+        for p in range(h, i):  # earliest first
+            prefix = "".join(t[4] for t in tokens[p:i])
+            p_cut, p_compounds = WordSplitter._run_compounds(tokens, p, k)
+            # lengths (from p) at which a match may end: the ends of the hovered particle and those after it
+            p_ends = frozenset(t[1] - tokens[p][0] for t in tokens[i:k + 1])
+            earlier.append((prefix, p_cut, p_compounds, p_ends))
+        return WordSpan(tokens[i][0], cut=cut, compounds=compounds, earlier=tuple(earlier))
+
+    @staticmethod
+    def _run_compounds(tokens: list, i: int, k: int) -> tuple:
+        """(length of the particle run tokens[i..k], the compound forms it can build with the following words)."""
+        run_end = tokens[k][1]
+        run = "".join(t[4] for t in tokens[i:k + 1])
         compounds = set()
         written = run
         prev_end = run_end
@@ -138,7 +158,7 @@ class WordSplitter:
             compounds.add(written)  # ...or as written (として)
             prev_end = t[1]
         compounds.discard(run)
-        return WordSpan(start, cut=run_end - start, compounds=frozenset(compounds))
+        return run_end - tokens[i][0], frozenset(compounds)
 
 
 @dataclass(frozen=True)
@@ -149,6 +169,9 @@ class WordSpan:
     name_key: Optional[str] = None  # the hovered noun, to look up in the names dictionary
     name_reading: str = ""  # its reading according to Sudachi (hiragana), to rank name readings
     proper: bool = False  # Sudachi tagged it as a proper noun (固有名詞)
+    # for particles: earlier starts in the same particle run, earliest first, as (text before the hovered particle,
+    # cut, compounds, lengths at which a match may end) measured from that earlier start
+    earlier: tuple = ()
 
     @property
     def needs_request(self) -> bool:

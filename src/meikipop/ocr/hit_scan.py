@@ -12,6 +12,19 @@ from meikipop.ocr.word_splitter import word_splitter
 logger = logging.getLogger(__name__)  # Get the logger
 
 
+def lookup_input(full_text: str, index: int):
+    """(start index, what to send to the lookup) for the cursor at full_text[index]: the plain text from the start,
+    or a LookupRequest carrying the word splitter's hints."""
+    if not config.smart_word_start:
+        return index, full_text[index:]
+    span = word_splitter.word_span(full_text, index)
+    text = full_text[span.start:]
+    if not span.needs_request:
+        return span.start, text
+    return span.start, LookupRequest(text, span.cut, span.compounds, span.name_key, span.name_reading,
+                                     span.proper, span.earlier)
+
+
 class HitScanner(threading.Thread):
     def __init__(self, shared_state, input_loop, screen_manager):
         super().__init__(daemon=True, name="HitScanner")
@@ -110,16 +123,8 @@ class HitScanner(threading.Thread):
             if final_char_index >= len(full_text):
                 continue
 
-            span = None
-            if config.smart_word_start:
-                span = word_splitter.word_span(full_text, final_char_index)
-                final_char_index = span.start
-
+            final_char_index, lookup_string = lookup_input(full_text, final_char_index)
             character = full_text[final_char_index]
-            lookup_string = full_text[final_char_index:]
-            if span is not None and span.needs_request:
-                lookup_string = LookupRequest(lookup_string, span.cut, span.compounds,
-                                              span.name_key, span.name_reading, span.proper)
             hit_scan_result = (full_text, final_char_index, character,
                                lookup_string)  # this may be interesting for debugging, but only lookup_string is really relevant
             break
