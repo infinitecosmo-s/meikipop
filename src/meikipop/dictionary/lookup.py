@@ -33,6 +33,15 @@ class DictionaryEntry:
     priority: float = 0.0
 
 
+@dataclass(frozen=True)
+class LookupRequest:
+    """A lookup whose matches past `cut` characters are only allowed when their written form or reading is one of
+    `compounds` (built by the word splitter for particles, e.g. と -> {とする, として, ...})."""
+    text: str
+    cut: int
+    compounds: frozenset
+
+
 @dataclass
 class KanjiEntry:
     character: str
@@ -73,11 +82,22 @@ class Lookup(threading.Thread):
                     continue
                 self.last_hit_result = hit_result
 
-                lookup_result = self.lookup(self.last_hit_result) if self.last_hit_result else None
+                if isinstance(self.last_hit_result, LookupRequest):
+                    lookup_result = self.lookup_request(self.last_hit_result)
+                else:
+                    lookup_result = self.lookup(self.last_hit_result) if self.last_hit_result else None
                 self.popup_window.set_latest_data(lookup_result)
             except:
                 logger.exception("An unexpected error occurred in the lookup loop. Continuing...")
         logger.debug("Lookup thread stopped.")
+
+    def lookup_request(self, request: LookupRequest) -> List:
+        """Allowed compound matches first (e.g. とする for と in としている), then the plain short lookup."""
+        allowed = [e for e in self.lookup(request.text)
+                   if isinstance(e, DictionaryEntry)
+                   and (e.written_form in request.compounds or (e.reading and e.reading in request.compounds))]
+        short = [e for e in self.lookup(request.text[:request.cut]) if e not in allowed]
+        return allowed + short
 
     def lookup(self, lookup_string: str) -> List:
         if not lookup_string:
