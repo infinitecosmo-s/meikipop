@@ -98,21 +98,42 @@ class SettingsDialog(QDialog):
         self.max_lookup_spin.setValue(config.max_lookup_length)
         core_layout.addRow("Max Lookup Length:", self.max_lookup_spin)
 
-        self.smart_word_start_check = QCheckBox()
-        self.smart_word_start_check.setChecked(config.smart_word_start)
-        self.smart_word_start_check.setToolTip(
-            "Split the sentence into words and look up the whole word under the cursor,\n"
-            "even when hovering its middle (e.g. 気 in 天気 looks up 天気).\n"
-            "Turn off to look up from exactly the hovered character."
+        self.lookup_mode_combo = QComboBox()
+        self.lookup_mode_map = {"Phrase (bunsetsu)": "bunsetsu", "Word under cursor": "word",
+                                "From hovered character": "off"}
+        self.lookup_mode_combo.addItems(self.lookup_mode_map.keys())
+        current_mode = next((k for k, v in self.lookup_mode_map.items() if v == config.lookup_mode),
+                            "Phrase (bunsetsu)")
+        self.lookup_mode_combo.setCurrentText(current_mode)
+        self.lookup_mode_combo.setToolTip(
+            "Phrase: look up everything in the phrase under the cursor (e.g. からかおうと shows\n"
+            "とする, からかう and と), wherever you hover in it.\n"
+            "Word under cursor: look up the whole word under the cursor (気 in 天気 looks up 天気).\n"
+            "From hovered character: look up from exactly the hovered character."
         )
-        core_layout.addRow("Look Up Whole Word:", self.smart_word_start_check)
+        self._set_expanding(self.lookup_mode_combo)
+        core_layout.addRow("Lookup Mode:", self.lookup_mode_combo)
+
+        self.max_entries_spin = QSpinBox()
+        self.max_entries_spin.setRange(1, 10)
+        self.max_entries_spin.setValue(config.max_entries)
+        self.max_entries_spin.setToolTip("How many dictionary entries the popup shows at most.")
+        core_layout.addRow("Max Entries:", self.max_entries_spin)
+
+        self.highlight_check = QCheckBox()
+        self.highlight_check.setChecked(config.highlight_lookup)
+        self.highlight_check.setToolTip(
+            "Mark the looked-up text on screen while the popup is shown: the phrase (or word) is\n"
+            "shaded and the part the first entry matched is underlined (a side line for vertical text)."
+        )
+        core_layout.addRow("Highlight Lookup:", self.highlight_check)
 
         self.show_names_check = QCheckBox()
         self.show_names_check.setChecked(config.show_names)
         self.show_names_check.setToolTip(
             "Show matches from the names dictionary (JMnedict) for words recognized as names,\n"
-            "e.g. 西片 -> Nishikata (surname). Needs 'Look Up Whole Word' and a names dictionary\n"
-            "built with 'meikipop build-names'."
+            "e.g. 西片 -> Nishikata (surname). Needs the phrase or word lookup mode and a names\n"
+            "dictionary built with 'meikipop build-names'."
         )
         core_layout.addRow("Show Names:", self.show_names_check)
 
@@ -441,7 +462,9 @@ class SettingsDialog(QDialog):
         config.hotkey = self.hotkey_combo.currentText()
         config.glens_low_bandwidth = self.glens_compression_check.isChecked()
         config.max_lookup_length = self.max_lookup_spin.value()
-        config.smart_word_start = self.smart_word_start_check.isChecked()
+        config.lookup_mode = self.lookup_mode_map.get(self.lookup_mode_combo.currentText(), "bunsetsu")
+        config.max_entries = self.max_entries_spin.value()
+        config.highlight_lookup = self.highlight_check.isChecked()
         config.show_names = self.show_names_check.isChecked()
         config.auto_scan_mode = self.auto_scan_check.isChecked()
         config.auto_scan_interval_seconds = self.auto_scan_interval_spin.value()

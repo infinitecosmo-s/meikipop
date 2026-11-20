@@ -10,6 +10,7 @@ from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel, QFrame, QApplication
 
 from meikipop.config.config import config, IS_MACOS
 from meikipop.dictionary.lookup import DictionaryEntry, KanjiEntry
+from meikipop.gui.highlight import HighlightOverlay
 from meikipop.gui.magpie_manager import magpie_manager
 
 # macOS-specific imports for focus management
@@ -26,7 +27,9 @@ class Popup(QWidget):
     def __init__(self, shared_state, input_loop):
         super().__init__()
         self._latest_data = None
+        self._latest_highlight = None
         self._last_latest_data = None
+        self.highlight_overlay = HighlightOverlay()
         self._data_lock = threading.Lock()
         self._previous_active_window_on_mac = None
 
@@ -150,13 +153,25 @@ class Popup(QWidget):
 
         return best_fit if best_fit > 0 else 50
 
-    def set_latest_data(self, data):
+    def set_latest_data(self, data, highlight=None):
         with self._data_lock:
             self._latest_data = data
+            self._latest_highlight = highlight
 
     def get_latest_data(self):
         with self._data_lock:
             return self._latest_data
+
+    def _update_highlight(self):
+        """Show the on-screen highlight for the current lookup while the popup is visible."""
+        with self._data_lock:
+            highlight = self._latest_highlight if config.highlight_lookup else None
+        if self.highlight_overlay.set_highlight(highlight):
+            if not self.highlight_overlay.isVisible():
+                self.highlight_overlay.show()
+                self.raise_()  # keep the popup above the highlight
+        else:
+            self.highlight_overlay.hide()
 
     def process_latest_data_loop(self):
         if not self.is_calibrated:
@@ -172,6 +187,7 @@ class Popup(QWidget):
 
         if self._latest_data and self.input_loop.is_virtual_hotkey_down() and config.is_enabled:
             self.show_popup()
+            self._update_highlight()
         else:
             self.hide_popup()
 
@@ -408,6 +424,7 @@ class Popup(QWidget):
         # logger.debug(f"hide_popup triggered while visibility:{self.is_visible}")
         if not self.is_visible:
             return
+        self.highlight_overlay.hide()
         self.hide()
         self.is_visible = False
         QTimer.singleShot(50, lambda: self._release_lock_safely())  # prevent popup from being screenshotted

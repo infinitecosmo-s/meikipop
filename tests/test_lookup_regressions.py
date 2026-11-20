@@ -17,7 +17,7 @@ from meikipop.utils.paths import paths
 _lookup = None
 
 
-def top(sentence: str, hovered: str, n: int = 1, nth: int = 1) -> list:
+def top(sentence: str, hovered: str, n: int = 1, nth: int = 1, mode: str = "word") -> list:
     """Written forms (reading if kana-only) of the first n entries shown when hovering the nth `hovered`."""
     global _lookup
     if _lookup is None:
@@ -25,9 +25,27 @@ def top(sentence: str, hovered: str, n: int = 1, nth: int = 1) -> list:
     index = -1
     for _ in range(nth):
         index = sentence.index(hovered, index + 1)
+    config.lookup_mode = mode
     _, request = lookup_input(sentence, index)
     results = _lookup.lookup_request(request) if isinstance(request, LookupRequest) else _lookup.lookup(request)
     return [e.written_form or e.reading for e in results if isinstance(e, DictionaryEntry)][:n]
+
+
+def phrase(sentence: str, hovered: str, n: int = 3, nth: int = 1) -> list:
+    return top(sentence, hovered, n=n, nth=nth, mode="bunsetsu")
+
+
+def everywhere(sentence: str, part: str, n: int = 2) -> set:
+    """The first n entries for each character of `part` in bunsetsu mode, as a set of tuples (should be one)."""
+    start = sentence.index(part)
+    out = set()
+    for i in range(start, start + len(part)):
+        global _lookup
+        config.lookup_mode = "bunsetsu"
+        _, request = lookup_input(sentence, i)
+        results = _lookup.lookup_request(request)
+        out.add(tuple(e.written_form or e.reading for e in results if isinstance(e, DictionaryEntry))[:n])
+    return out
 
 
 def test_middle_of_word_looks_up_whole_word():
@@ -58,6 +76,44 @@ def test_particle_can_be_reached_from_an_earlier_particle_of_its_run():
     assert top("西片をからかおうとしている…わけではなく", "は") == ["ではない"]
     assert top("西片をからかおうとしている…わけではなく", "で") == ["ではない"]
     assert top("そうなんだ…でもさぁ", "さ") == ["さあ"]  # でも does not reach さぁ
+
+
+SENTENCE = "西片をからかおうとしている…わけではなく"
+
+
+def test_bunsetsu_split():
+    from meikipop.ocr.word_splitter import word_splitter
+    parts, i = [], 0
+    while i < len(SENTENCE):
+        span = word_splitter.bunsetsu_span(SENTENCE, i)
+        parts.append(SENTENCE[span.start:span.start + span.length])
+        i = span.start + span.length
+    assert parts == ["西片を", "からかおうと", "している…", "わけでは", "なく"]
+
+
+def test_bunsetsu_shows_expression_then_content_then_particle():
+    assert phrase(SENTENCE, "と") == ["とする", "として", "からかう"]
+    assert phrase(SENTENCE, "か", n=10)[-1] == "と"  # the particle comes last
+    assert everywhere(SENTENCE, "からかおうと", n=1) == {("とする",)}  # any character means the same
+
+
+def test_bunsetsu_expression_from_its_start_comes_first():
+    assert phrase(SENTENCE, "わ", n=2) == ["わけではない", "ではない"]
+    assert len(everywhere(SENTENCE, "わけでは", n=4)) == 1
+
+
+def test_bunsetsu_content_before_longer_greeting():
+    results = phrase("今日は良い天気ですね", "日", n=5)
+    assert results[0] == "今日" and "今日" in results and results.index("今日は") > 0  # 今日は = こんにちは
+    assert len(everywhere("今日は良い天気ですね", "今日は", n=3)) == 1
+    assert phrase("今日は良い天気ですね", "す", n=1) == ["天気"]
+
+
+def test_bunsetsu_conjugations_and_particles():
+    assert phrase("食べさせられなかった", "な", n=1) == ["食べる"]
+    assert phrase("魔法少女になってよ！", "に", n=2)[0] == "魔法少女"
+    assert "担う" not in phrase("魔法少女になってよ！", "に", n=10)
+    assert phrase("気がつかなかった", "が", n=2)[0] == "気がつく"  # 気 + が + つく(dictionary form)
 
 
 def _names_available() -> bool:

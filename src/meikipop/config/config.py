@@ -39,8 +39,10 @@ class Config:
             'auto_scan_interval_seconds': 0.5,
             'auto_scan_on_mouse_move': True,
             'magpie_compatibility': True,
-            'smart_word_start': True,
+            'lookup_mode': 'bunsetsu',  # off / word / bunsetsu
             'show_names': True,
+            'highlight_lookup': True,
+            'max_entries': 4,
             'validated_dict_ts': -1
         },
         'Theme': {

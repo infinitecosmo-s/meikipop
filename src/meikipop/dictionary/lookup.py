@@ -32,6 +32,7 @@ class DictionaryEntry:
     freq: int
     deconjugation_process: tuple
     priority: float = 0.0
+    match_len: int = 0  # how many characters of the looked-up text it matched (0 if unknown, e.g. names)
 
 
 @dataclass(frozen=True)
@@ -48,6 +49,19 @@ class LookupRequest:
     name_reading: str = ""
     proper: bool = False
     earlier: tuple = ()  # ((prefix, cut, compounds, ends), ...): earlier particle starts, see WordSpan.earlier
+    bunsetsu: Optional[object] = None  # a word_splitter.BunsetsuSpan in bunsetsu mode (offsets relative to text)
+    # on-screen box (x, y, w, h in physical screen pixels) of each character of `text`, for the highlight
+    boxes: tuple = ()
+    vertical: bool = False
+
+
+@dataclass(frozen=True)
+class Highlight:
+    """What to mark on screen: the looked-up unit (the bunsetsu, or the top match outside bunsetsu mode) and the
+    characters the top entry matched, as character boxes in physical screen pixels."""
+    unit: tuple
+    match: tuple
+    vertical: bool
 
 
 @dataclass
@@ -90,11 +104,15 @@ class Lookup(threading.Thread):
                     continue
                 self.last_hit_result = hit_result
 
+                highlight = None
                 if isinstance(self.last_hit_result, LookupRequest):
-                    lookup_result = self.lookup_request(self.last_hit_result)
+                    lookup_result, spans = self.lookup_with_spans(self.last_hit_result)
+                    highlight = self._highlight(self.last_hit_result, lookup_result, spans)
+                    lookup_result = self._limit_entries(lookup_result)
                 else:
                     lookup_result = self.lookup(self.last_hit_result) if self.last_hit_result else None
-                self.popup_window.set_latest_data(lookup_result)
+                    lookup_result = self._limit_entries(lookup_result) if lookup_result else lookup_result
+                self.popup_window.set_latest_data(lookup_result, highlight)
             except:
                 logger.exception("An unexpected error occurred in the lookup loop. Continuing...")
         logger.debug("Lookup thread stopped.")
@@ -106,7 +124,123 @@ class Lookup(threading.Thread):
                    and (e.written_form in compounds or (e.reading and e.reading in compounds))]
         return allowed + [e for e in self.lookup(text[:cut]) if e not in allowed]
 
+    @staticmethod
+    def _limit_entries(results: List) -> List:
+        """At most config.max_entries dictionary / name entries (kanji entries are kept)."""
+        out, n = [], 0
+        for e in results:
+            if isinstance(e, DictionaryEntry):
+                if n >= config.max_entries:
+                    continue
+                n += 1
+            out.append(e)
+        return out
+
+    @staticmethod
+    def _match_len(entry, text: str, default: int) -> int:
+        """How many characters of `text` the entry matched, as recorded by the lookup; failing that its written form
+        or reading if text starts with it, otherwise `default`."""
+        if entry.match_len:
+            return min(entry.match_len, len(text))
+        for form in (entry.written_form, entry.reading):
+            if form and text.startswith(form):
+                return len(form)
+        return default
+
+    def _highlight(self, request: LookupRequest, results: List, spans: List) -> Optional[Highlight]:
+        if not config.highlight_lookup or not request.boxes:
+            return None
+        boxes = request.boxes
+        top = next((span for entry, span in zip(results, spans) if isinstance(entry, DictionaryEntry) and span), None)
+        if request.bunsetsu is not None:
+            unit = boxes[:request.bunsetsu.length]
+        elif top:
+            unit = boxes[top[0]:top[1]]
+        else:
+            return None
+        match = boxes[top[0]:top[1]] if top else ()
+        return Highlight(unit=tuple(unit), match=tuple(match), vertical=request.vertical)
+
+    def lookup_with_spans(self, request: LookupRequest) -> Tuple[List, List]:
+        """The entries for a request and, per entry, the (start, end) of the characters of request.text it
+        matched (None for kanji entries)."""
+        if request.bunsetsu is not None:
+            return self._lookup_bunsetsu(request)
+        results = self.lookup_request(request)
+        spans = [(0, self._match_len(e, request.text, max(1, min(len(request.text), request.cut or 99))))
+                 if isinstance(e, DictionaryEntry) else None for e in results]
+        return results, spans
+
+    def _lookup_bunsetsu(self, request: LookupRequest) -> Tuple[List, List]:
+        """Everything in the hovered bunsetsu, in this order:
+          a) expressions crossing into the next bunsetsu that are built from the actual words, earliest start
+             first (わけではない, ではない; とする)
+          b) the content word, with conjugations undone (からかう)
+          c) a longer word ending inside the bunsetsu (今日は 'hello' after 今日)
+          d) the particles / particle expressions after the content (と; では)
+        Names for a leading noun follow the usual names rules."""
+        b, text = request.bunsetsu, request.text
+        items = []  # (entry, (start, end))
+
+        for offset, forms in b.expressions:
+            lengths = dict(forms)
+            # the deconjugated lookup first, then each candidate form looked up as is: the deconjugator's part of
+            # speech check drops expression entries such as わけではない (an 'exp', not an i-adjective).
+            # Only written forms count: a reading match is a different word that merely sounds the same
+            # (賭する read とする, 都市 read とし), like 担う for に+なっ.
+            candidates = self.lookup(text[offset:])
+            for form in lengths:
+                candidates = candidates + self.lookup(form)
+            seen_forms = set()
+            for e in candidates:
+                if (isinstance(e, DictionaryEntry) and e.written_form in lengths
+                        and e.written_form not in seen_forms):
+                    seen_forms.add(e.written_form)  # one entry per expression (the best ranked)
+                    items.append((e, (offset, offset + lengths[e.written_form])))
+
+        content = text[:b.content_len]
+        content_results = self.lookup(content)
+        words = [e for e in content_results if isinstance(e, DictionaryEntry)]
+        content_len = self._match_len(words[0], content, b.content_len) if words else 0
+        for e in words:
+            n = self._match_len(e, content, b.content_len)
+            if n == content_len:  # homographs of the best match only, not shorter prefixes (から in からかおう)
+                items.append((e, (0, n)))
+            if len([1 for i in items if i[1] == (0, content_len)]) >= 2:
+                break  # at most two readings / spellings of the content word
+
+        whole = text[:b.length]
+        for e in self.lookup(whole):
+            if isinstance(e, DictionaryEntry):
+                n = self._match_len(e, whole, 0)
+                if n > content_len and n in b.boundaries:
+                    items.append((e, (0, n)))
+                    break
+
+        for offset, length in b.particle_runs:
+            run = text[offset:offset + length]
+            e = next((e for e in self.lookup(run) if isinstance(e, DictionaryEntry)), None)
+            if e:
+                items.append((e, (offset, offset + self._match_len(e, run, length))))
+
+        entries, spans = [], []
+        for e, span in items:
+            if e not in entries:
+                entries.append(e)
+                spans.append(span)
+
+        if b.name_key and config.show_names:
+            with_names = self._add_names(entries, b)
+            span_of = {id(e): s for e, s in zip(entries, spans)}
+            spans = [span_of.get(id(e), (0, len(b.name_key))) for e in with_names]
+            entries = with_names
+
+        kanji = [e for e in content_results if not isinstance(e, DictionaryEntry)]
+        return entries + kanji, spans + [None] * len(kanji)
+
     def lookup_request(self, request: LookupRequest) -> List:
+        if request.bunsetsu is not None:
+            return self._lookup_bunsetsu(request)[0]
         if request.cut is not None:
             results = self._particle_lookup(request.text, request.cut, request.compounds)
             # an entry starting at an earlier particle of the same run wins if it reaches the hovered one
@@ -338,6 +472,7 @@ class Lookup(threading.Thread):
                 freq=d['freq'],
                 deconjugation_process=d['deconjugation_process'],
                 priority=d['priority'],
+                match_len=d['match_len'],
             ))
         return results
 

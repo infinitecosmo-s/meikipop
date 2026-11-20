@@ -12,17 +12,48 @@ from meikipop.ocr.word_splitter import word_splitter
 logger = logging.getLogger(__name__)  # Get the logger
 
 
-def lookup_input(full_text: str, index: int):
-    """(start index, what to send to the lookup) for the cursor at full_text[index]: the plain text from the start,
-    or a LookupRequest carrying the word splitter's hints."""
-    if not config.smart_word_start:
-        return index, full_text[index:]
-    span = word_splitter.word_span(full_text, index)
-    text = full_text[span.start:]
-    if not span.needs_request:
-        return span.start, text
-    return span.start, LookupRequest(text, span.cut, span.compounds, span.name_key, span.name_reading,
-                                     span.proper, span.earlier)
+LOOKUP_MODES = ("off", "word", "bunsetsu")  # config.lookup_mode: from the hovered character / word / bunsetsu
+_MAX_BOX_CHARS = 40  # character boxes passed along for the highlight
+
+
+def lookup_input(full_text: str, index: int, boxes: tuple = (), vertical: bool = False):
+    """(start index, LookupRequest) for the cursor at full_text[index], according to config.lookup_mode.
+    `boxes` are the on-screen boxes of every character of full_text (or empty), for the highlight."""
+    def request(start, **hints):
+        return start, LookupRequest(full_text[start:], boxes=tuple(boxes[start:start + _MAX_BOX_CHARS]),
+                                    vertical=vertical, **hints)
+
+    mode = config.lookup_mode
+    if mode == "bunsetsu":
+        span = word_splitter.bunsetsu_span(full_text, index)
+        if span is not None:
+            return request(span.start, bunsetsu=span)
+        mode = "word"  # word splitter unavailable: fall back
+    if mode == "word":
+        span = word_splitter.word_span(full_text, index)
+        return request(span.start, cut=span.cut, compounds=span.compounds, name_key=span.name_key,
+                       name_reading=span.name_reading, proper=span.proper, earlier=span.earlier)
+    return request(index)
+
+
+def char_boxes(para: Paragraph, geometry) -> tuple:
+    """On-screen (x, y, w, h) of each character of para.full_text in physical screen pixels, or () if the words do
+    not line up with the text. Words longer than one character (e.g. from Google Lens) are divided evenly along the
+    reading direction."""
+    off_x, off_y, img_w, img_h = geometry
+    boxes = []
+    for word in para.words:
+        n = len(word.text)
+        b = word.box
+        x0, y0 = b.center_x - b.width / 2, b.center_y - b.height / 2
+        for k in range(n):
+            if para.is_vertical:
+                cx, cy, cw, ch = x0, y0 + b.height * k / n, b.width, b.height / n
+            else:
+                cx, cy, cw, ch = x0 + b.width * k / n, y0, b.width / n, b.height
+            boxes.append((round(off_x + cx * img_w), round(off_y + cy * img_h),
+                          max(1, round(cw * img_w)), max(1, round(ch * img_h))))
+    return tuple(boxes) if len(boxes) == len(para.full_text) else ()
 
 
 class HitScanner(threading.Thread):
@@ -123,7 +154,8 @@ class HitScanner(threading.Thread):
             if final_char_index >= len(full_text):
                 continue
 
-            final_char_index, lookup_string = lookup_input(full_text, final_char_index)
+            boxes = char_boxes(para, (mouse_off_x, mouse_off_y, img_w, img_h))
+            final_char_index, lookup_string = lookup_input(full_text, final_char_index, boxes, para.is_vertical)
             character = full_text[final_char_index]
             hit_scan_result = (full_text, final_char_index, character,
                                lookup_string)  # this may be interesting for debugging, but only lookup_string is really relevant
