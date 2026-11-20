@@ -40,6 +40,7 @@ class Config:
             'auto_scan_on_mouse_move': True,
             'magpie_compatibility': True,
             'smart_word_start': True,
+            'show_names': True,
             'validated_dict_ts': -1
         },
         'Theme': {

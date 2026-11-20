@@ -101,6 +101,7 @@ def main():
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
     subparsers.add_parser("build-dict", help="Build the dictionary from source files")
+    subparsers.add_parser("build-names", help="Build the optional names dictionary (JMnedict)")
 
     import_html_parser = subparsers.add_parser("import-yomitan-dict-html", help="Import Yomitan dictionary (HTML format)")
     import_html_parser.add_argument("dictionary_files", nargs='+', help="Path(s) to the dictionary zip file(s)")
@@ -113,6 +114,9 @@ def main():
     if args.command == "build-dict":
         from meikipop.scripts.build_dictionary import main as build_main
         build_main()
+    elif args.command == "build-names":
+        from meikipop.scripts.build_names import main as build_names_main
+        build_names_main()
     elif args.command == "import-yomitan-dict-html":
         from meikipop.scripts.import_yomitan_dict_html import main as import_html_main
         import_html_main([*args.dictionary_files])

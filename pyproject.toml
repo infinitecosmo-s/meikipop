@@ -39,6 +39,7 @@ meikipop = "meikipop.main:main"
 
 [project.entry-points."meikipop.scripts"]
 build-dict = "meikipop.scripts.build_dictionary:main"
+build-names = "meikipop.scripts.build_names:main"
 import-yomitan-dict-html = "meikipop.scripts.import_yomitan_dict_html:main"
 import-yomitan-dict-text = "meikipop.scripts.import_yomitan_dict_text:main"
 

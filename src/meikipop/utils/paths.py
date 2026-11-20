@@ -36,6 +36,11 @@ class MeikiPaths:
         return os.path.join(self.data_dir, 'dictionary.pkl')
     
     @property
+    def names_path(self):
+        """Location of names.sqlite (optional JMnedict names dictionary)"""
+        return os.path.join(self.data_dir, 'names.sqlite')
+
+    @property
     def cache_dir(self):
         """Location for cached downloads"""
         return self._platform_dirs.user_cache_dir

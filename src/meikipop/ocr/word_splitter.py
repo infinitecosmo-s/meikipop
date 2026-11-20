@@ -55,7 +55,8 @@ class WordSplitter:
             return False
 
     def _tokens(self, text: str) -> list:
-        """[(begin, end, pos0, pos1, surface, dictionary_form)] for non-empty tokens of text, cached per text."""
+        """[(begin, end, pos0, pos1, surface, dictionary_form, pos2, reading in hiragana)] for non-empty tokens of
+        text, cached per text."""
         cached = self._cache.get(text)
         if cached is not None:
             self._cache.move_to_end(text)
@@ -66,7 +67,8 @@ class WordSplitter:
             if end <= begin:
                 continue  # Sudachi can emit empty tokens around symbols such as …
             pos = m.part_of_speech()
-            tokens.append((begin, end, pos[0], pos[1], m.surface(), m.dictionary_form()))
+            tokens.append((begin, end, pos[0], pos[1], m.surface(), m.dictionary_form(), pos[2],
+                           _kata_to_hira(m.reading_form())))
         self._cache[text] = tokens
         if len(self._cache) > _CACHE_SIZE:
             self._cache.popitem(last=False)
@@ -74,7 +76,7 @@ class WordSplitter:
 
     @staticmethod
     def _is_helper(token) -> bool:
-        _, _, pos0, pos1, surface, _ = token
+        pos0, pos1, surface = token[2], token[3], token[4]
         if pos0 == "助動詞":
             return True
         # negation ない after an adjective's く form: 美しく|ない
@@ -107,7 +109,10 @@ class WordSplitter:
             j -= 1
         if j != i and tokens[j][2] not in _CONJUGATING_HEADS:
             j = i  # the helper chain did not end in a verb / adjective (e.g. 天気|です): keep the hovered piece
-        return WordSpan(tokens[j][0])
+        t = tokens[j]
+        if t[2] == "名詞":  # nouns may be names: let the lookup consult the names dictionary
+            return WordSpan(t[0], name_key=t[4], name_reading=t[7], proper=t[3] == "固有名詞")
+        return WordSpan(t[0])
 
     @staticmethod
     def _particle_span(tokens: list, i: int) -> WordSpan:
@@ -141,6 +146,17 @@ class WordSpan:
     start: int  # where the lookup starts in the text
     cut: Optional[int] = None  # if set, only matches up to this length, or one of the compounds, are allowed
     compounds: frozenset = frozenset()  # longer forms (written or kana) that are allowed past the cut
+    name_key: Optional[str] = None  # the hovered noun, to look up in the names dictionary
+    name_reading: str = ""  # its reading according to Sudachi (hiragana), to rank name readings
+    proper: bool = False  # Sudachi tagged it as a proper noun (固有名詞)
+
+    @property
+    def needs_request(self) -> bool:
+        return self.cut is not None or self.name_key is not None
+
+
+def _kata_to_hira(text: str) -> str:
+    return "".join(chr(ord(c) - 0x60) if "ァ" <= c <= "ヶ" else c for c in text)
 
 
 word_splitter = WordSplitter()

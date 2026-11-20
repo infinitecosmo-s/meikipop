@@ -117,8 +117,9 @@ class HitScanner(threading.Thread):
 
             character = full_text[final_char_index]
             lookup_string = full_text[final_char_index:]
-            if span is not None and span.cut is not None:
-                lookup_string = LookupRequest(lookup_string, span.cut, span.compounds)
+            if span is not None and span.needs_request:
+                lookup_string = LookupRequest(lookup_string, span.cut, span.compounds,
+                                              span.name_key, span.name_reading, span.proper)
             hit_scan_result = (full_text, final_char_index, character,
                                lookup_string)  # this may be interesting for debugging, but only lookup_string is really relevant
             break

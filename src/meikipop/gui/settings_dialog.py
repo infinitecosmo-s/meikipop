@@ -107,6 +107,15 @@ class SettingsDialog(QDialog):
         )
         core_layout.addRow("Look Up Whole Word:", self.smart_word_start_check)
 
+        self.show_names_check = QCheckBox()
+        self.show_names_check.setChecked(config.show_names)
+        self.show_names_check.setToolTip(
+            "Show matches from the names dictionary (JMnedict) for words recognized as names,\n"
+            "e.g. 西片 -> Nishikata (surname). Needs 'Look Up Whole Word' and a names dictionary\n"
+            "built with 'meikipop build-names'."
+        )
+        core_layout.addRow("Show Names:", self.show_names_check)
+
         if IS_WINDOWS:
             self.magpie_check = QCheckBox()
             self.magpie_check.setChecked(config.magpie_compatibility)
@@ -433,6 +442,7 @@ class SettingsDialog(QDialog):
         config.glens_low_bandwidth = self.glens_compression_check.isChecked()
         config.max_lookup_length = self.max_lookup_spin.value()
         config.smart_word_start = self.smart_word_start_check.isChecked()
+        config.show_names = self.show_names_check.isChecked()
         config.auto_scan_mode = self.auto_scan_check.isChecked()
         config.auto_scan_interval_seconds = self.auto_scan_interval_spin.value()
         config.auto_scan_mode_lookups_without_hotkey = self.auto_scan_no_hotkey_check.isChecked()

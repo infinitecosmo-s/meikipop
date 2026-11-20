@@ -5,11 +5,12 @@ import re
 import threading
 from collections import OrderedDict
 from dataclasses import dataclass
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from meikipop.config.config import config, MAX_DICT_ENTRIES, DICT_PATH
 from meikipop.dictionary.customdict import Dictionary, WRITTEN_FORM_INDEX, READING_INDEX, FREQUENCY_INDEX, ENTRY_ID_INDEX, DEFAULT_FREQ
 from meikipop.dictionary.deconjugator import Deconjugator, Form
+from meikipop.dictionary.names import name_dictionary, NAME_ENTRY_ID
 
 KANJI_REGEX = re.compile(r'[\u4e00-\u9faf]')
 JAPANESE_SEPARATORS = {
@@ -35,11 +36,17 @@ class DictionaryEntry:
 
 @dataclass(frozen=True)
 class LookupRequest:
-    """A lookup whose matches past `cut` characters are only allowed when their written form or reading is one of
-    `compounds` (built by the word splitter for particles, e.g. と -> {とする, として, ...})."""
+    """A lookup with hints from the word splitter.
+
+    If `cut` is set, matches past `cut` characters are only allowed when their written form or reading is one of
+    `compounds` (for particles, e.g. と -> {とする, として, ...}). If `name_key` is set, the hovered word is a noun that
+    may also be looked up in the names dictionary; `proper` says Sudachi tagged it as a proper noun."""
     text: str
-    cut: int
-    compounds: frozenset
+    cut: Optional[int] = None
+    compounds: frozenset = frozenset()
+    name_key: Optional[str] = None
+    name_reading: str = ""
+    proper: bool = False
 
 
 @dataclass
@@ -92,12 +99,41 @@ class Lookup(threading.Thread):
         logger.debug("Lookup thread stopped.")
 
     def lookup_request(self, request: LookupRequest) -> List:
-        """Allowed compound matches first (e.g. とする for と in としている), then the plain short lookup."""
-        allowed = [e for e in self.lookup(request.text)
-                   if isinstance(e, DictionaryEntry)
-                   and (e.written_form in request.compounds or (e.reading and e.reading in request.compounds))]
-        short = [e for e in self.lookup(request.text[:request.cut]) if e not in allowed]
-        return allowed + short
+        if request.cut is not None:
+            # allowed compound matches first (e.g. とする for と in としている), then the plain short lookup
+            allowed = [e for e in self.lookup(request.text)
+                       if isinstance(e, DictionaryEntry)
+                       and (e.written_form in request.compounds or (e.reading and e.reading in request.compounds))]
+            results = allowed + [e for e in self.lookup(request.text[:request.cut]) if e not in allowed]
+        else:
+            results = self.lookup(request.text)
+        if request.name_key and config.show_names:
+            results = self._add_names(results, request)
+        return results
+
+    def _add_names(self, results: List, request: LookupRequest) -> List:
+        """Add names for the hovered noun: before ordinary entries if Sudachi says it is a proper noun (高木さん ->
+        Takagi before 'tall tree'), after them if the ordinary dictionary has no entry for the whole word, and not
+        at all otherwise (so 西 alone still just means 'west')."""
+        key = request.name_key
+        exact = [e for e in results if isinstance(e, DictionaryEntry)
+                 and (e.written_form == key or e.reading == key)]
+        if exact and not request.proper:
+            return results
+        names = [DictionaryEntry(id=NAME_ENTRY_ID, written_form=written, reading=reading,
+                                 senses=[{'glosses': [gloss], 'pos': [], 'tags': ['name']}],
+                                 freq=DEFAULT_FREQ, deconjugation_process=())
+                 for written, reading, gloss in name_dictionary.lookup(key, request.name_reading)]
+        if not names:
+            return results
+        if request.proper:
+            # longer ordinary matches that contain the name stay first (東京大学 before 東京 'Tokyo')
+            longer = [e for e in results if isinstance(e, DictionaryEntry)
+                      and len(e.written_form or "") > len(key) and e.written_form.startswith(key)]
+            return longer + names + [e for e in results if e not in longer]
+        # after ordinary entries, before the kanji entry
+        words = [e for e in results if isinstance(e, DictionaryEntry)]
+        return words + names + [e for e in results if not isinstance(e, DictionaryEntry)]
 
     def lookup(self, lookup_string: str) -> List:
         if not lookup_string:
